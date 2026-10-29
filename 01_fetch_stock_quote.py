@@ -6,12 +6,13 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from stock_config import TICKERS
+
 
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-TICKERS = ["PETR4", "VALE3", "ITUB4", "MGLU3"]
 API_URL = "https://brapi.dev/api/quote/{}"
 
 
