@@ -21,6 +21,7 @@ PIPELINE_STEPS = [
     "16_upload_processed_to_s3.py",
     "06_update_stock_history.py",
     "08_validate_persistent_history.py",
+    "17_upload_silver_to_s3.py",
     "11_build_gold_indicators.py",
     "12_validate_gold_data.py",
     "13_test_gold_indicators.py",
