@@ -26,3 +26,9 @@ data/silver/*.csv
 
 # Generated Gold analytical datasets
 data/gold/*.csv
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
