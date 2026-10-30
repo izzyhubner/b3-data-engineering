@@ -1,5 +1,6 @@
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -16,11 +17,15 @@ RAW_DIR.mkdir(parents=True, exist_ok=True)
 API_URL = "https://brapi.dev/api/quote/{}"
 
 
-def fetch_quote(ticker):
+def fetch_quote(ticker, token):
     url = API_URL.format(ticker)
+
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "B3DataEngineeringPortfolio/1.0"},
+        headers={
+            "User-Agent": "B3DataEngineeringPortfolio/1.0",
+            "Authorization": f"Bearer {token}",
+        },
     )
 
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -28,6 +33,12 @@ def fetch_quote(ticker):
 
 
 def main():
+    token = os.getenv("BRAPI_TOKEN")
+
+    if not token or not token.strip():
+        print("BRAPI_TOKEN environment variable is not configured.")
+        sys.exit(1)
+
     successful_tickers = 0
     failed_tickers = 0
 
@@ -36,7 +47,7 @@ def main():
         output_file = RAW_DIR / f"{ticker.lower()}_{timestamp}.json"
 
         try:
-            payload = fetch_quote(ticker)
+            payload = fetch_quote(ticker, token)
 
             results = payload.get("results", [])
 

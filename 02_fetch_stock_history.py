@@ -1,6 +1,7 @@
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +19,7 @@ RAW_DIR.mkdir(parents=True, exist_ok=True)
 API_URL = "https://brapi.dev/api/v2/stocks/historical"
 
 
-def fetch_history(ticker):
+def fetch_history(ticker, token):
     params = urlencode(
         {
             "symbols": ticker,
@@ -28,9 +29,13 @@ def fetch_history(ticker):
         }
     )
     url = f"{API_URL}?{params}"
+
     request = Request(
         url,
-        headers={"User-Agent": "b3-data-engineering/1.0"},
+        headers={
+            "User-Agent": "b3-data-engineering/1.0",
+            "Authorization": f"Bearer {token}",
+        },
     )
 
     with urlopen(request, timeout=30) as response:
@@ -54,7 +59,9 @@ def fetch_history(ticker):
     )
 
     if not history:
-        raise ValueError(f"No historical price records returned for {ticker}.")
+        raise ValueError(
+            f"No historical price records returned for {ticker}."
+        )
 
     return payload
 
@@ -75,13 +82,22 @@ def main():
         format="%(levelname)s | %(message)s",
     )
 
+    token = os.getenv("BRAPI_TOKEN")
+
+    if not token or not token.strip():
+        logging.error(
+            "BRAPI_TOKEN environment variable is not configured."
+        )
+        sys.exit(1)
+
     successful = 0
     failed = 0
 
     for ticker in TICKERS:
         try:
-            payload = fetch_history(ticker)
+            payload = fetch_history(ticker, token)
             output_file = save_history(ticker, payload)
+
             logging.info(
                 "%s: historical data saved to %s",
                 ticker,

@@ -1,5 +1,6 @@
 
 import logging
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -23,6 +24,10 @@ PIPELINE_STEPS = [
     "10_cleanup_raw_data.py",
 ]
 
+LOG_LEVEL_PATTERN = re.compile(
+    r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*\|"
+)
+
 
 def configure_logging():
     logging.basicConfig(
@@ -33,6 +38,21 @@ def configure_logging():
             logging.StreamHandler(sys.stdout),
         ],
     )
+
+
+def log_subprocess_output(script_name, output, default_level):
+    if not output:
+        return
+
+    for line in output.rstrip().splitlines():
+        match = LOG_LEVEL_PATTERN.search(line)
+
+        if match:
+            level = getattr(logging, match.group(1))
+        else:
+            level = default_level
+
+        logging.log(level, "[%s] %s", script_name, line)
 
 
 def run_step(script_name):
@@ -63,13 +83,17 @@ def run_step(script_name):
         logging.exception("Could not start script: %s", script_name)
         raise
 
-    if result.stdout:
-        for line in result.stdout.rstrip().splitlines():
-            logging.info("[%s] %s", script_name, line)
+    log_subprocess_output(
+        script_name,
+        result.stdout,
+        logging.INFO,
+    )
 
-    if result.stderr:
-        for line in result.stderr.rstrip().splitlines():
-            logging.warning("[%s] %s", script_name, line)
+    log_subprocess_output(
+        script_name,
+        result.stderr,
+        logging.WARNING,
+    )
 
     if result.returncode != 0:
         logging.error(
