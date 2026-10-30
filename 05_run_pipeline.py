@@ -18,6 +18,7 @@ PIPELINE_STEPS = [
     "02_fetch_stock_history.py",
     "03_transform_stock_history.py",
     "04_validate_stock_data.py",
+    "16_upload_processed_to_s3.py",
     "06_update_stock_history.py",
     "08_validate_persistent_history.py",
     "11_build_gold_indicators.py",
