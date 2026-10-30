@@ -8,12 +8,14 @@ Stock market data is collected from the Brapi API, processed through a local Pyt
 
 AWS Glue Data Catalog manages table definitions and partition metadata, while Amazon Athena provides serverless SQL access to the datasets.
 
-The architecture currently uses four data layers:
+The architecture uses four data layers:
 
 - Raw
 - Processed
 - Silver
 - Gold
+
+Structured datasets are stored directly as Parquet files. No intermediate CSV conversion is required.
 
 ## 2. AWS Infrastructure
 
@@ -23,6 +25,9 @@ The architecture currently uses four data layers:
 | S3 Bucket | `izzy-b3-lakehouse` |
 | Glue Database | `b3_lakehouse` |
 | Athena Results Location | `s3://izzy-b3-lakehouse/athena-results/` |
+| Structured Data Format | Parquet |
+| Parquet Compression | Snappy |
+| Raw Data Format | JSON |
 | Infrastructure as Code | Terraform |
 
 ### S3 Bucket Security
@@ -41,44 +46,51 @@ Terraform manages the bucket and its security-related configurations.
 The project follows a layered architecture in which each layer has a specific responsibility.
 
 ```text
-                    Brapi API
-                        |
-                        v
-                 +-------------+
-                 |     Raw     |
-                 | JSON Snapshots
-                 +-------------+
-                        |
-                        v
-                 +-------------+
-                 |  Processed  |
-                 |  CSV Dataset|
-                 +-------------+
-                        |
-                        v
-                 +-------------+
-                 |    Silver   |
-                 | Persistent  |
-                 | Historical  |
-                 |    Data     |
-                 +-------------+
-                        |
-                        v
-                 +-------------+
-                 |     Gold    |
-                 | Analytical  |
-                 | Indicators  |
-                 +-------------+
-                        |
-                        v
-                  Amazon S3
-                        |
-              +---------+---------+
-              |                   |
-              v                   v
-         AWS Glue              Athena
-       Data Catalog          SQL Queries
+                         Brapi API
+                             |
+                             v
+                      +-------------+
+                      |     Raw     |
+                      |     JSON    |
+                      |  Snapshots  |
+                      +-------------+
+                             |
+                             v
+                      +-------------+
+                      |  Processed  |
+                      |   Parquet   |
+                      |  Transformed|
+                      |    Data     |
+                      +-------------+
+                             |
+                             v
+                      +-------------+
+                      |    Silver   |
+                      |   Parquet   |
+                      |  Persistent |
+                      |  Historical |
+                      |    Data     |
+                      +-------------+
+                             |
+                             v
+                      +-------------+
+                      |     Gold    |
+                      |   Parquet   |
+                      |  Analytical |
+                      |  Indicators |
+                      +-------------+
+                             |
+                             v
+                         Amazon S3
+                             |
+                   +---------+---------+
+                   |                   |
+                   v                   v
+              AWS Glue              Athena
+           Data Catalog           SQL Queries
 ```
+
+The local Python pipeline performs ingestion, transformation, validation, and orchestration. Amazon S3 stores the resulting datasets, while Glue and Athena provide metadata management and analytical access.
 
 ### 3.1 Raw Layer
 
@@ -103,38 +115,50 @@ raw/
 
 Historical API responses can contain multiple trading dates. Therefore, Raw historical files are partitioned by ingestion date rather than individual trading dates.
 
+Raw preserves the original API responses and acts as the source for downstream transformations.
+
 ### 3.2 Processed Layer
 
-Stores transformed historical stock data as CSV.
+Stores transformed historical stock data directly as Parquet.
 
 Main dataset:
 
-`daily_stock_analysis.csv`
+`daily_stock_analysis.parquet`
+
+Local output:
+
+`data/parquet/processed/daily_stock_analysis.parquet`
 
 S3 organization:
 
 ```text
 processed/
 └── ingestion_date=YYYY-MM-DD/
-    └── daily_stock_analysis.csv
+    └── daily_stock_analysis.parquet
 ```
 
 This layer contains structured OHLCV data and calculated candle-related metrics.
 
+The transformation reads Raw JSON files and writes the structured dataset directly to Parquet using PyArrow and Snappy compression.
+
 ### 3.3 Silver Layer
 
-Stores the persistent historical stock dataset.
+Stores the persistent historical stock dataset directly as Parquet.
 
 Main dataset:
 
-`daily_stock_history.csv`
+`daily_stock_history.parquet`
+
+Local output:
+
+`data/parquet/silver/daily_stock_history.parquet`
 
 S3 organization:
 
 ```text
 silver/
 └── ingestion_date=YYYY-MM-DD/
-    └── daily_stock_history.csv
+    └── daily_stock_history.parquet
 ```
 
 The local Python pipeline maintains this dataset using an upsert strategy based on:
@@ -145,20 +169,26 @@ Existing records are updated when necessary, and new trading sessions are insert
 
 The process is designed to be idempotent and avoid duplicate historical records.
 
+Silver preserves the accumulated historical dataset across pipeline executions.
+
 ### 3.4 Gold Layer
 
-Stores analytical stock indicators generated from Silver.
+Stores analytical stock indicators generated from Silver, directly as Parquet.
 
 Main dataset:
 
-`daily_stock_indicators.csv`
+`daily_stock_indicators.parquet`
+
+Local output:
+
+`data/parquet/gold/daily_stock_indicators.parquet`
 
 S3 organization:
 
 ```text
 gold/
 └── ingestion_date=YYYY-MM-DD/
-    └── daily_stock_indicators.csv
+    └── daily_stock_indicators.parquet
 ```
 
 Calculated indicators include:
@@ -171,26 +201,51 @@ Calculated indicators include:
 
 Indicator calculations are performed independently for each ticker.
 
-## 4. S3 Upload Strategy
+Gold provides an analysis-ready dataset for SQL queries and downstream analytical use cases.
+
+## 4. Data Format and Storage Strategy
+
+The project uses JSON for Raw data and Parquet for all structured layers.
+
+| Layer | Format | Compression | Purpose |
+|---|---|---|---|
+| Raw | JSON | API response format | Preserve original source data |
+| Processed | Parquet | Snappy | Store transformed stock data |
+| Silver | Parquet | Snappy | Maintain persistent historical data |
+| Gold | Parquet | Snappy | Store analytical indicators |
+
+Parquet was selected for structured datasets because it is a columnar storage format suitable for analytical workloads.
+
+Benefits include:
+
+- Column-oriented data access.
+- Efficient compression.
+- Typed schema representation.
+- Reduced data scanning for queries that access selected columns.
+- Native compatibility with Amazon Athena.
+
+The pipeline writes Parquet directly. There is no CSV intermediate layer or separate CSV-to-Parquet conversion step.
+
+## 5. S3 Upload Strategy
 
 The local Python pipeline uploads the four data layers to S3.
 
 | Script | Responsibility |
 |---|---|
 | `14_upload_raw_to_s3.py` | Uploads original API JSON snapshots. |
-| `16_upload_processed_to_s3.py` | Uploads Processed CSV data. |
-| `17_upload_silver_to_s3.py` | Uploads persistent Silver data. |
-| `18_upload_gold_to_s3.py` | Uploads Gold analytical data. |
+| `16_upload_processed_to_s3.py` | Uploads Processed Parquet data. |
+| `17_upload_silver_to_s3.py` | Uploads persistent Silver Parquet data. |
+| `18_upload_gold_to_s3.py` | Uploads Gold analytical Parquet data. |
 
 Uploads use SHA-256 checksums to avoid unnecessary transfers when file contents have not changed.
 
-For Processed, Silver, and Gold, files are organized by ingestion date.
+For Processed, Silver, and Gold, files are organized by ingestion date using Hive-style partition folders.
 
 When the same S3 key is overwritten, S3 versioning preserves previous object versions.
 
-The project currently uses CSV for structured datasets and JSON for Raw API responses.
+The upload scripts use the configured AWS profile and do not store AWS credentials in source code.
 
-## 5. AWS Glue Data Catalog
+## 6. AWS Glue Data Catalog
 
 AWS Glue Data Catalog stores metadata about the datasets available in S3.
 
@@ -200,12 +255,13 @@ Database:
 
 Registered external tables:
 
-| Table | S3 Location | Partition Column |
-|---|---|---|
-| `silver_daily_stock_history` | `s3://izzy-b3-lakehouse/silver/` | `ingestion_date` |
-| `gold_daily_stock_indicators` | `s3://izzy-b3-lakehouse/gold/` | `ingestion_date` |
+| Table | S3 Location | Format | Partition Column |
+|---|---|---|---|
+| `processed_daily_stock_analysis_parquet` | `s3://izzy-b3-lakehouse/processed/` | Parquet | `ingestion_date` |
+| `silver_daily_stock_history_parquet` | `s3://izzy-b3-lakehouse/silver/` | Parquet | `ingestion_date` |
+| `gold_daily_stock_indicators_parquet` | `s3://izzy-b3-lakehouse/gold/` | Parquet | `ingestion_date` |
 
-The tables use external definitions, meaning the underlying CSV files remain stored in S3.
+The tables use external definitions, meaning the underlying Parquet files remain stored in S3.
 
 Glue stores:
 
@@ -222,21 +278,25 @@ S3 partition folders follow Hive-style partition naming:
 
 `ingestion_date=YYYY-MM-DD`
 
-After new partition folders are uploaded, the partitions can be discovered and registered using:
+After new partition folders are uploaded, partitions can be discovered and registered using:
 
 ```sql
-MSCK REPAIR TABLE b3_lakehouse.silver_daily_stock_history;
+MSCK REPAIR TABLE b3_lakehouse.processed_daily_stock_analysis_parquet;
 
-MSCK REPAIR TABLE b3_lakehouse.gold_daily_stock_indicators;
+MSCK REPAIR TABLE b3_lakehouse.silver_daily_stock_history_parquet;
+
+MSCK REPAIR TABLE b3_lakehouse.gold_daily_stock_indicators_parquet;
 ```
 
-This operation synchronizes the partitions discovered in S3 with the Glue Data Catalog.
+Execute each statement separately in Athena.
 
-It does not move or modify the underlying CSV files.
+This operation synchronizes partitions discovered in S3 with the Glue Data Catalog.
 
-## 6. Amazon Athena
+It does not move or modify the underlying Parquet files.
 
-Amazon Athena provides serverless SQL queries directly over the CSV files stored in S3.
+## 7. Amazon Athena
+
+Amazon Athena provides serverless SQL queries directly over the Parquet files stored in S3.
 
 Athena uses the external table definitions registered in Glue Data Catalog.
 
@@ -249,27 +309,36 @@ Example:
 ```sql
 SELECT
     ticker,
-    trade_date,
+    date,
     close,
     sma_5,
     sma_20,
     daily_return_pct,
     volatility_5d
-FROM b3_lakehouse.gold_daily_stock_indicators
+FROM b3_lakehouse.gold_daily_stock_indicators_parquet
 WHERE ticker = 'ABEV3'
-ORDER BY trade_date DESC
+ORDER BY date DESC
 LIMIT 10;
 ```
 
-The complete SQL setup and validation queries are available in:
+The complete SQL setup, partition management, and validation queries are available in:
 
 `docs/aws/athena-queries.sql`
 
-## 7. Data Quality Validation
+## 8. Data Quality Validation
 
-The AWS datasets were validated through SQL queries executed in Amazon Athena.
+The project validates datasets locally and through SQL queries executed in Amazon Athena.
 
-Validation covered:
+Local validation includes:
+
+- Processed dataset validation.
+- Persistent Silver history validation.
+- Duplicate ticker-date key checks.
+- OHLC price consistency.
+- Gold indicator recalculation and comparison.
+- Synthetic tests for history updates and indicator calculations.
+
+Athena validation covers:
 
 - Record counts by ticker.
 - Available trading date ranges.
@@ -282,13 +351,25 @@ Validation covered:
 - Invalid indicator values.
 - Registered S3 partitions.
 
-All validation queries executed successfully, with no data quality issues identified in the validation run.
+### Latest Athena Validation Results
 
-Detailed validation documentation:
+The Parquet tables were successfully queried in Athena.
 
-`docs/aws/data-quality-validation.md`
+| Layer | Total Records | Distinct Tickers | First Date | Last Date |
+|---|---:|---:|---|---|
+| Processed | 220 | 10 | 2026-09-30 | 2026-10-30 |
+| Silver | 230 | 10 | 2026-09-29 | 2026-10-30 |
+| Gold | 230 | 10 | 2026-09-29 | 2026-10-30 |
 
-## 8. Infrastructure as Code
+Processed contains the current transformed dataset, while Silver and Gold contain the accumulated historical dataset.
+
+The three Parquet tables were successfully registered and queried. The previous CSV Athena tables were removed from the Glue Data Catalog.
+
+Detailed validation queries are available in:
+
+`docs/aws/athena-queries.sql`
+
+## 9. Infrastructure as Code
 
 Terraform configuration is maintained under:
 
@@ -306,12 +387,13 @@ The project uses AWS CLI profiles for local AWS authentication.
 
 Sensitive credentials and API tokens are not stored in source code.
 
-## 9. Current Architecture Limitations
+## 10. Current Architecture Limitations
 
 The current implementation has the following characteristics:
 
 - Data ingestion and transformation run locally.
-- CSV is used for structured datasets.
+- Raw source data is stored as JSON.
+- Structured datasets are stored as Parquet with Snappy compression.
 - S3 stores the Lakehouse datasets.
 - Glue Data Catalog manages external table metadata.
 - Athena provides serverless SQL queries.
@@ -329,15 +411,15 @@ The project does not currently use:
 
 These technologies may be considered in future iterations.
 
-## 10. Future Improvements
+## 11. Future Improvements
 
 Potential architecture improvements include:
 
-- Convert structured datasets from CSV to Parquet.
 - Evaluate Apache Spark and PySpark for distributed processing.
 - Introduce Delta Lake for transactional data management.
 - Implement cloud-native pipeline orchestration.
 - Explore Databricks integration.
 - Improve automated data quality monitoring.
+- Evaluate automated partition management.
 
-The current implementation establishes the initial AWS Lakehouse foundation for future development.
+The current implementation establishes an AWS Lakehouse foundation with direct Parquet storage, persistent historical data, and serverless analytical access through Athena.

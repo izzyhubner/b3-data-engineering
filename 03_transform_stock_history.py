@@ -1,29 +1,49 @@
 
-import csv
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from stock_config import TICKERS
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
-PROCESSED_DIR = PROJECT_DIR / "data" / "processed"
-OUTPUT_FILE = PROCESSED_DIR / "daily_stock_analysis.csv"
+PROCESSED_DIR = PROJECT_DIR / "data" / "parquet" / "processed"
+OUTPUT_FILE = PROCESSED_DIR / "daily_stock_analysis.parquet"
 
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-FIELDNAMES = [
-    "ticker", "date", "open", "high", "low", "close", "volume",
-    "body", "body_pct", "range", "range_pct", "upper_wick",
-    "lower_wick", "close_position", "is_bullish",
-    "close_return_pct", "gap_pct",
-    "candle_body", "candle_range", "upper_shadow", "lower_shadow",
-    "daily_return_pct", "overnight_gap_pct", "volume_avg_5d",
-]
+SCHEMA = pa.schema([
+    ("ticker", pa.string()),
+    ("date", pa.date32()),
+    ("open", pa.float64()),
+    ("high", pa.float64()),
+    ("low", pa.float64()),
+    ("close", pa.float64()),
+    ("volume", pa.float64()),
+    ("body", pa.float64()),
+    ("body_pct", pa.float64()),
+    ("range", pa.float64()),
+    ("range_pct", pa.float64()),
+    ("upper_wick", pa.float64()),
+    ("lower_wick", pa.float64()),
+    ("close_position", pa.float64()),
+    ("is_bullish", pa.bool_()),
+    ("close_return_pct", pa.float64()),
+    ("gap_pct", pa.float64()),
+    ("candle_body", pa.float64()),
+    ("candle_range", pa.float64()),
+    ("upper_shadow", pa.float64()),
+    ("lower_shadow", pa.float64()),
+    ("daily_return_pct", pa.float64()),
+    ("overnight_gap_pct", pa.float64()),
+    ("volume_avg_5d", pa.float64()),
+])
 
 
 def load_latest_history(ticker):
@@ -62,12 +82,13 @@ def transform_history(ticker, history):
 
     for item in history:
         timestamp = item.get("date")
+
         if timestamp is None:
             continue
 
         date_value = datetime.fromtimestamp(
             int(timestamp), timezone.utc
-        ).date().isoformat()
+        ).date()
 
         records.append({
             "ticker": ticker,
@@ -175,6 +196,24 @@ def transform_history(ticker, history):
     return output
 
 
+def write_parquet(records):
+    table = pa.Table.from_pylist(records, schema=SCHEMA)
+
+    temporary_file = OUTPUT_FILE.with_suffix(".tmp.parquet")
+
+    pq.write_table(
+        table,
+        temporary_file,
+        compression="snappy",
+        use_dictionary=["ticker"],
+        write_statistics=True,
+    )
+
+    temporary_file.replace(OUTPUT_FILE)
+
+    return table.num_rows
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -189,10 +228,12 @@ def main():
             source_file, history = load_latest_history(ticker)
             rows = transform_history(ticker, history)
             all_rows.extend(rows)
+
             logging.info(
                 "%s: transformed %s records from %s",
                 ticker, len(rows), source_file.name,
             )
+
         except (
             FileNotFoundError,
             json.JSONDecodeError,
@@ -214,23 +255,20 @@ def main():
         sys.exit(1)
 
     unique_rows = {
-        (row["ticker"], row["date"]): row for row in all_rows
+        (row["ticker"], row["date"]): row
+        for row in all_rows
     }
+
     final_rows = sorted(
         unique_rows.values(),
         key=lambda row: (row["ticker"], row["date"]),
     )
 
-    with OUTPUT_FILE.open(
-        "w", newline="", encoding="utf-8"
-    ) as file:
-        writer = csv.DictWriter(file, fieldnames=FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(final_rows)
+    rows_written = write_parquet(final_rows)
 
     logging.info("Transformation status: PASSED")
     logging.info("Tickers processed: %s", len(TICKERS))
-    logging.info("Rows written: %s", len(final_rows))
+    logging.info("Rows written: %s", rows_written)
     logging.info("Output file: %s", OUTPUT_FILE)
 
 

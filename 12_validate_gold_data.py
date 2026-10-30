@@ -1,15 +1,30 @@
-import csv
+
 import logging
 import math
 import statistics
 from collections import Counter
 from pathlib import Path
 
+import pyarrow.parquet as pq
+
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
-SOURCE_FILE = PROJECT_DIR / "data" / "silver" / "daily_stock_history.csv"
-GOLD_FILE = PROJECT_DIR / "data" / "gold" / "daily_stock_indicators.csv"
+SOURCE_FILE = (
+    PROJECT_DIR
+    / "data"
+    / "parquet"
+    / "silver"
+    / "daily_stock_history.parquet"
+)
+
+GOLD_FILE = (
+    PROJECT_DIR
+    / "data"
+    / "parquet"
+    / "gold"
+    / "daily_stock_indicators.parquet"
+)
 
 SILVER_FIELDS = {
     "ticker",
@@ -37,33 +52,23 @@ logging.basicConfig(
 )
 
 
-def load_csv(file_path, required_fields):
+def load_parquet(file_path, required_fields):
     if not file_path.exists():
         raise FileNotFoundError(
             f"Dataset not found: {file_path}"
         )
 
-    with file_path.open(
-        "r",
-        newline="",
-        encoding="utf-8",
-    ) as file:
-        reader = csv.DictReader(file)
+    table = pq.read_table(file_path)
 
-        if reader.fieldnames is None:
-            raise ValueError(
-                f"Dataset has no header: {file_path}"
-            )
+    missing_fields = required_fields - set(table.column_names)
 
-        missing_fields = required_fields - set(reader.fieldnames)
+    if missing_fields:
+        raise ValueError(
+            f"Missing required fields in {file_path.name}: "
+            f"{sorted(missing_fields)}"
+        )
 
-        if missing_fields:
-            raise ValueError(
-                f"Missing required fields in {file_path.name}: "
-                f"{sorted(missing_fields)}"
-            )
-
-        return list(reader)
+    return table.to_pylist()
 
 
 def validate_gold(source_rows, gold_rows):
@@ -184,24 +189,24 @@ def validate_gold(source_rows, gold_rows):
                 }
 
                 for field, expected in expected_values.items():
-                    actual_text = row[field].strip()
+                    actual_value = row[field]
 
                     if expected is None:
-                        if actual_text:
+                        if actual_value is not None:
                             issues.append(
                                 f"{ticker} {row['date']}: "
-                                f"{field} should be empty"
+                                f"{field} should be null"
                             )
                         continue
 
-                    if not actual_text:
+                    if actual_value is None:
                         issues.append(
                             f"{ticker} {row['date']}: "
-                            f"{field} is unexpectedly empty"
+                            f"{field} is unexpectedly null"
                         )
                         continue
 
-                    actual = float(actual_text)
+                    actual = float(actual_value)
 
                     if not math.isfinite(actual):
                         issues.append(
@@ -221,7 +226,7 @@ def validate_gold(source_rows, gold_rows):
                             f"{field} calculation mismatch"
                         )
 
-            except (ValueError, ZeroDivisionError) as error:
+            except (ValueError, TypeError, ZeroDivisionError) as error:
                 issues.append(
                     f"{ticker} {row['date']}: invalid data - {error}"
                 )
@@ -232,8 +237,8 @@ def validate_gold(source_rows, gold_rows):
 def main():
     logging.info("Starting Gold data validation.")
 
-    source_rows = load_csv(SOURCE_FILE, SILVER_FIELDS)
-    gold_rows = load_csv(GOLD_FILE, GOLD_FIELDS)
+    source_rows = load_parquet(SOURCE_FILE, SILVER_FIELDS)
+    gold_rows = load_parquet(GOLD_FILE, GOLD_FIELDS)
 
     logging.info("Silver records loaded: %s", len(source_rows))
     logging.info("Gold records loaded: %s", len(gold_rows))

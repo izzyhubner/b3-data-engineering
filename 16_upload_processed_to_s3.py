@@ -9,7 +9,13 @@ from botocore.exceptions import ClientError
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-SOURCE_FILE = PROJECT_DIR / "data" / "processed" / "daily_stock_analysis.csv"
+SOURCE_FILE = (
+    PROJECT_DIR
+    / "data"
+    / "parquet"
+    / "processed"
+    / "daily_stock_analysis.parquet"
+)
 
 BUCKET = "izzy-b3-lakehouse"
 AWS_PROFILE = "b3-data-engineering"
@@ -27,10 +33,7 @@ def calculate_sha256(file_path):
 
 def get_existing_hash(s3, key):
     try:
-        response = s3.head_object(
-            Bucket=BUCKET,
-            Key=key,
-        )
+        response = s3.head_object(Bucket=BUCKET, Key=key)
         return response.get("Metadata", {}).get("sha256")
 
     except ClientError as error:
@@ -45,15 +48,15 @@ def get_existing_hash(s3, key):
 
 
 def upload_processed_data():
-    logging.info("Starting Processed upload.")
+    logging.info("Starting Processed Parquet upload.")
 
-    if not SOURCE_FILE.exists():
+    if not SOURCE_FILE.is_file():
         raise FileNotFoundError(
-            f"Processed dataset not found: {SOURCE_FILE}"
+            f"Processed Parquet file not found: {SOURCE_FILE}"
         )
 
     if SOURCE_FILE.stat().st_size == 0:
-        raise ValueError("Processed dataset is empty.")
+        raise ValueError("Processed Parquet file is empty.")
 
     ingestion_date = datetime.now(
         timezone.utc
@@ -61,7 +64,7 @@ def upload_processed_data():
 
     s3_key = (
         f"processed/ingestion_date={ingestion_date}/"
-        f"{SOURCE_FILE.name}"
+        "daily_stock_analysis.parquet"
     )
 
     file_hash = calculate_sha256(SOURCE_FILE)
@@ -72,9 +75,7 @@ def upload_processed_data():
     existing_hash = get_existing_hash(s3, s3_key)
 
     if existing_hash == file_hash:
-        logging.info(
-            "Processed dataset unchanged. Upload skipped."
-        )
+        logging.info("Processed Parquet unchanged. Upload skipped.")
         return
 
     s3.upload_file(
@@ -82,14 +83,13 @@ def upload_processed_data():
         BUCKET,
         s3_key,
         ExtraArgs={
-            "Metadata": {
-                "sha256": file_hash
-            }
+            "ContentType": "application/vnd.apache.parquet",
+            "Metadata": {"sha256": file_hash},
         },
     )
 
     logging.info(
-        "Processed dataset uploaded: s3://%s/%s",
+        "Processed Parquet uploaded: s3://%s/%s",
         BUCKET,
         s3_key,
     )

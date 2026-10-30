@@ -12,8 +12,9 @@ PROJECT_DIR = Path(__file__).resolve().parent
 SOURCE_FILE = (
     PROJECT_DIR
     / "data"
+    / "parquet"
     / "silver"
-    / "daily_stock_history.csv"
+    / "daily_stock_history.parquet"
 )
 
 BUCKET = "izzy-b3-lakehouse"
@@ -32,10 +33,7 @@ def calculate_sha256(file_path):
 
 def get_existing_hash(s3, key):
     try:
-        response = s3.head_object(
-            Bucket=BUCKET,
-            Key=key,
-        )
+        response = s3.head_object(Bucket=BUCKET, Key=key)
         return response.get("Metadata", {}).get("sha256")
 
     except ClientError as error:
@@ -50,15 +48,15 @@ def get_existing_hash(s3, key):
 
 
 def upload_silver_data():
-    logging.info("Starting Silver upload.")
+    logging.info("Starting Silver Parquet upload.")
 
     if not SOURCE_FILE.is_file():
         raise FileNotFoundError(
-            f"Silver dataset not found: {SOURCE_FILE}"
+            f"Silver Parquet file not found: {SOURCE_FILE}"
         )
 
     if SOURCE_FILE.stat().st_size == 0:
-        raise ValueError("Silver dataset is empty.")
+        raise ValueError("Silver Parquet file is empty.")
 
     ingestion_date = datetime.now(
         timezone.utc
@@ -66,7 +64,7 @@ def upload_silver_data():
 
     s3_key = (
         f"silver/ingestion_date={ingestion_date}/"
-        f"{SOURCE_FILE.name}"
+        "daily_stock_history.parquet"
     )
 
     file_hash = calculate_sha256(SOURCE_FILE)
@@ -77,9 +75,7 @@ def upload_silver_data():
     existing_hash = get_existing_hash(s3, s3_key)
 
     if existing_hash == file_hash:
-        logging.info(
-            "Silver dataset unchanged. Upload skipped."
-        )
+        logging.info("Silver Parquet unchanged. Upload skipped.")
         return
 
     s3.upload_file(
@@ -87,14 +83,13 @@ def upload_silver_data():
         BUCKET,
         s3_key,
         ExtraArgs={
-            "Metadata": {
-                "sha256": file_hash
-            }
+            "ContentType": "application/vnd.apache.parquet",
+            "Metadata": {"sha256": file_hash},
         },
     )
 
     logging.info(
-        "Silver dataset uploaded: s3://%s/%s",
+        "Silver Parquet uploaded: s3://%s/%s",
         BUCKET,
         s3_key,
     )

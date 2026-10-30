@@ -1,5 +1,6 @@
 
 import hashlib
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -7,20 +8,20 @@ import boto3
 from botocore.exceptions import ClientError
 
 
-AWS_PROFILE = "b3-data-engineering"
-BUCKET_NAME = "izzy-b3-lakehouse"
-
-SOURCE_FILE = Path("data/gold/daily_stock_indicators.csv")
-
-INGESTION_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-S3_KEY = (
-    f"gold/ingestion_date={INGESTION_DATE}/"
-    "daily_stock_indicators.csv"
+PROJECT_DIR = Path(__file__).resolve().parent
+SOURCE_FILE = (
+    PROJECT_DIR
+    / "data"
+    / "parquet"
+    / "gold"
+    / "daily_stock_indicators.parquet"
 )
 
+BUCKET = "izzy-b3-lakehouse"
+AWS_PROFILE = "b3-data-engineering"
 
-def calculate_sha256(file_path: Path) -> str:
+
+def calculate_sha256(file_path):
     sha256 = hashlib.sha256()
 
     with file_path.open("rb") as file:
@@ -30,13 +31,9 @@ def calculate_sha256(file_path: Path) -> str:
     return sha256.hexdigest()
 
 
-def get_existing_hash(s3_client, bucket: str, key: str):
+def get_existing_hash(s3, key):
     try:
-        response = s3_client.head_object(
-            Bucket=bucket,
-            Key=key
-        )
-
+        response = s3.head_object(Bucket=BUCKET, Key=key)
         return response.get("Metadata", {}).get("sha256")
 
     except ClientError as error:
@@ -50,51 +47,61 @@ def get_existing_hash(s3_client, bucket: str, key: str):
         raise
 
 
-def main():
-    if not SOURCE_FILE.exists():
+def upload_gold_data():
+    logging.info("Starting Gold Parquet upload.")
+
+    if not SOURCE_FILE.is_file():
         raise FileNotFoundError(
-            f"Gold file not found: {SOURCE_FILE}"
+            f"Gold Parquet file not found: {SOURCE_FILE}"
         )
 
     if SOURCE_FILE.stat().st_size == 0:
-        raise ValueError(
-            f"Gold file is empty: {SOURCE_FILE}"
-        )
+        raise ValueError("Gold Parquet file is empty.")
+
+    ingestion_date = datetime.now(
+        timezone.utc
+    ).strftime("%Y-%m-%d")
+
+    s3_key = (
+        f"gold/ingestion_date={ingestion_date}/"
+        "daily_stock_indicators.parquet"
+    )
 
     file_hash = calculate_sha256(SOURCE_FILE)
 
-    session = boto3.Session(
-        profile_name=AWS_PROFILE
-    )
+    session = boto3.Session(profile_name=AWS_PROFILE)
+    s3 = session.client("s3")
 
-    s3_client = session.client("s3")
-
-    existing_hash = get_existing_hash(
-        s3_client,
-        BUCKET_NAME,
-        S3_KEY
-    )
+    existing_hash = get_existing_hash(s3, s3_key)
 
     if existing_hash == file_hash:
-        print("Gold file is already up to date.")
-        print(f"S3 location: s3://{BUCKET_NAME}/{S3_KEY}")
+        logging.info("Gold Parquet unchanged. Upload skipped.")
         return
 
-    s3_client.upload_file(
+    s3.upload_file(
         str(SOURCE_FILE),
-        BUCKET_NAME,
-        S3_KEY,
+        BUCKET,
+        s3_key,
         ExtraArgs={
-            "Metadata": {
-                "sha256": file_hash
-            }
-        }
+            "ContentType": "application/vnd.apache.parquet",
+            "Metadata": {"sha256": file_hash},
+        },
     )
 
-    print("Gold file uploaded successfully.")
-    print(f"Source: {SOURCE_FILE}")
-    print(f"Destination: s3://{BUCKET_NAME}/{S3_KEY}")
-    print(f"SHA-256: {file_hash}")
+    logging.info(
+        "Gold Parquet uploaded: s3://%s/%s",
+        BUCKET,
+        s3_key,
+    )
+
+
+def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
+
+    upload_gold_data()
 
 
 if __name__ == "__main__":

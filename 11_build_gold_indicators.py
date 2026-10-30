@@ -1,14 +1,38 @@
 
-import csv
 import logging
+import os
 import statistics
+from datetime import date, datetime
 from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-SOURCE_FILE = PROJECT_DIR / "data" / "silver" / "daily_stock_history.csv"
-OUTPUT_DIR = PROJECT_DIR / "data" / "gold"
-OUTPUT_FILE = OUTPUT_DIR / "daily_stock_indicators.csv"
+
+SOURCE_FILE = (
+    PROJECT_DIR
+    / "data"
+    / "parquet"
+    / "silver"
+    / "daily_stock_history.parquet"
+)
+
+OUTPUT_DIR = PROJECT_DIR / "data" / "parquet" / "gold"
+OUTPUT_FILE = OUTPUT_DIR / "daily_stock_indicators.parquet"
+
+SCHEMA = pa.schema([
+    ("ticker", pa.string()),
+    ("date", pa.date32()),
+    ("close", pa.float64()),
+    ("daily_return_pct", pa.float64()),
+    ("sma_5", pa.float64()),
+    ("sma_20", pa.float64()),
+    ("volatility_5d", pa.float64()),
+    ("volume", pa.float64()),
+    ("volume_ratio", pa.float64()),
+])
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,14 +47,23 @@ def load_silver_data():
             f"Silver dataset not found: {SOURCE_FILE}"
         )
 
-    with SOURCE_FILE.open("r", newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        rows = list(reader)
+    table = pq.read_table(SOURCE_FILE)
 
-    if not rows:
+    if table.num_rows == 0:
         raise ValueError("Silver dataset is empty.")
 
-    return rows
+    required_fields = ["ticker", "date", "close", "volume"]
+    missing_fields = [
+        field for field in required_fields
+        if field not in table.column_names
+    ]
+
+    if missing_fields:
+        raise ValueError(
+            f"Silver dataset is missing fields: {missing_fields}"
+        )
+
+    return table.to_pylist()
 
 
 def calculate_indicators(rows):
@@ -116,38 +149,42 @@ def calculate_indicators(rows):
 def save_gold_data(rows):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    fieldnames = [
-        "ticker",
-        "date",
-        "close",
-        "daily_return_pct",
-        "sma_5",
-        "sma_20",
-        "volatility_5d",
-        "volume",
-        "volume_ratio",
-    ]
+    rounded_rows = []
 
-    with OUTPUT_FILE.open(
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
+    for row in rows:
+        rounded_rows.append({
+            key: (
+                round(value, 6)
+                if isinstance(value, float)
+                else value
+            )
+            for key, value in row.items()
+        })
 
-        for row in rows:
-            writer.writerow({
-                key: (
-                    round(value, 6)
-                    if isinstance(value, float)
-                    else value
-                )
-                for key, value in row.items()
-            })
+    table = pa.Table.from_pylist(
+        rounded_rows,
+        schema=SCHEMA,
+    )
+
+    temporary_file = OUTPUT_FILE.with_suffix(".tmp.parquet")
+
+    try:
+        pq.write_table(
+            table,
+            temporary_file,
+            compression="snappy",
+            use_dictionary=["ticker"],
+            write_statistics=True,
+        )
+
+        os.replace(temporary_file, OUTPUT_FILE)
+
+    finally:
+        if temporary_file.exists():
+            temporary_file.unlink()
 
     logging.info("Gold dataset saved: %s", OUTPUT_FILE)
-    logging.info("Records generated: %s", len(rows))
+    logging.info("Records generated: %s", table.num_rows)
 
 
 def main():
@@ -159,7 +196,9 @@ def main():
     gold_rows = calculate_indicators(silver_rows)
     save_gold_data(gold_rows)
 
-    logging.info("Gold indicators generation completed successfully.")
+    logging.info(
+        "Gold indicators generation completed successfully."
+    )
 
 
 if __name__ == "__main__":

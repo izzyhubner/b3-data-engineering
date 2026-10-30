@@ -1,6 +1,6 @@
 # B3 Data Engineering
 
-A data engineering portfolio project focused on collecting, transforming, validating, and maintaining Brazilian stock market data, with an AWS-based Lakehouse architecture.
+A data engineering portfolio project focused on collecting, transforming, validating, and maintaining Brazilian stock market data through an AWS-based Lakehouse architecture.
 
 The project uses the [Brapi API](https://brapi.dev/) to collect B3 stock market data and processes it through a layered data pipeline using Python and AWS services.
 
@@ -11,42 +11,48 @@ The pipeline collects daily stock quotes and historical OHLCV data for a configu
 Data flows through four layers:
 
 ```text
-                  Brapi API
-                      |
-                      v
-                    Raw
-                      |
-                      v
-                  Processed
-                      |
-                      v
-                    Silver
-                      |
-                      v
-                    Gold
-                      |
-                      v
-                 AWS S3 Lakehouse
-                      |
-              +-------+-------+
-              |               |
-              v               v
-          AWS Glue          Athena
-        Data Catalog      SQL Queries
+                         Brapi API
+                             |
+                             v
+                           Raw
+                         (JSON)
+                             |
+                             v
+                        Processed
+                        (Parquet)
+                             |
+                             v
+                          Silver
+                        (Parquet)
+                             |
+                             v
+                           Gold
+                        (Parquet)
+                             |
+                             v
+                      AWS S3 Lakehouse
+                             |
+                    +--------+--------+
+                    |                 |
+                    v                 v
+                 AWS Glue          Athena
+               Data Catalog     SQL Queries
 ```
 
 ### Data Layers
 
-| Layer | Description |
-|---|---|
-| Raw | Original API responses stored as JSON snapshots. |
-| Processed | Transformed daily stock data enriched with price-related metrics. |
-| Silver | Persistent historical dataset maintained through an idempotent upsert process. |
-| Gold | Analytical dataset containing calculated technical indicators. |
+| Layer | Description | Storage Format |
+|---|---|---|
+| Raw | Original API responses stored as immutable ingestion snapshots. | JSON |
+| Processed | Transformed daily stock data enriched with price-related metrics. | Parquet |
+| Silver | Persistent historical dataset maintained through an idempotent upsert process. | Parquet |
+| Gold | Analytical dataset containing calculated technical indicators. | Parquet |
 
-The local Python pipeline handles ingestion, transformation, validation, and uploads to AWS S3.
+The local Python pipeline handles ingestion, transformation, validation, historical maintenance, and uploads to AWS S3.
 
 AWS Glue Data Catalog manages table metadata and partitions, while Amazon Athena provides serverless SQL access to the Lakehouse datasets.
+
+Structured datasets are written directly to Parquet using Snappy compression. No intermediate CSV conversion is required.
 
 ## Current Status
 
@@ -59,7 +65,8 @@ The initial AWS Lakehouse implementation is also operational.
 | Stock quote ingestion | Implemented |
 | Historical data ingestion | Implemented |
 | Configurable ticker list | Implemented |
-| Data transformation | Implemented |
+| Raw JSON snapshots | Implemented |
+| Data transformation to Parquet | Implemented |
 | Data quality validation | Implemented |
 | Persistent Silver layer | Implemented |
 | Idempotent upsert | Implemented |
@@ -79,7 +86,6 @@ The initial AWS Lakehouse implementation is also operational.
 | Glue partition registration | Implemented |
 | Amazon Athena SQL queries | Implemented |
 | Cloud-native orchestration | Planned |
-| Parquet conversion | Planned |
 | Distributed processing with Spark | Planned |
 | Delta Lake | Planned |
 
@@ -88,9 +94,20 @@ The initial AWS Lakehouse implementation is also operational.
 - S3 bucket: `izzy-b3-lakehouse`
 - AWS Region: `us-east-1`
 - Glue database: `b3_lakehouse`
-- Silver table: `silver_daily_stock_history`
-- Gold table: `gold_daily_stock_indicators`
+- Processed table: `processed_daily_stock_analysis_parquet`
+- Silver table: `silver_daily_stock_history_parquet`
+- Gold table: `gold_daily_stock_indicators_parquet`
 - Athena query results: `s3://izzy-b3-lakehouse/athena-results/`
+
+Latest Athena validation results:
+
+| Layer | Records | Tickers | First Date | Last Date |
+|---|---:|---:|---|---|
+| Processed | 220 | 10 | 2026-09-30 | 2026-10-30 |
+| Silver | 230 | 10 | 2026-09-29 | 2026-10-30 |
+| Gold | 230 | 10 | 2026-09-29 | 2026-10-30 |
+
+Silver and Gold contain the accumulated historical dataset, while Processed represents the latest transformed ingestion.
 
 ## Technologies
 
@@ -102,7 +119,10 @@ The initial AWS Lakehouse implementation is also operational.
 - Terraform
 - Boto3
 - JSON
-- CSV
+- Apache Parquet
+- PyArrow
+- Snappy compression
+- SQL
 - Git and GitHub
 - PowerShell
 
@@ -116,14 +136,16 @@ b3-data-engineering/
 │
 ├── data/
 │   ├── raw/
-│   ├── processed/
-│   ├── silver/
-│   └── gold/
+│   └── parquet/
+│       ├── processed/
+│       ├── silver/
+│       └── gold/
 │
 ├── docs/
 │   └── aws/
 │       ├── lakehouse-architecture.md
-│       └── athena-queries.sql
+│       ├── athena-queries.sql
+│       └── data-quality-validation.md
 │
 ├── infrastructure/
 │   └── terraform/
@@ -155,6 +177,8 @@ b3-data-engineering/
 └── README.md
 ```
 
+Generated Parquet datasets are stored locally under `data/parquet/` and excluded from Git through `.gitignore`.
+
 ## Stock Configuration
 
 The ticker list is centralized in `config/stocks.json`.
@@ -180,7 +204,7 @@ New assets can be added by updating the configuration file without modifying the
 
 `01_fetch_stock_quote.py`
 
-Collects current stock quote information from the Brapi API and saves original responses as JSON files in the Raw layer.
+Collects current stock quote information from the Brapi API and saves original responses as JSON snapshots in the local Raw layer.
 
 ### Historical Prices
 
@@ -202,15 +226,17 @@ Historical records include:
 
 Both ingestion scripts authenticate through the `BRAPI_TOKEN` environment variable.
 
+Original API responses are preserved in JSON format, allowing the structured datasets to be rebuilt from the source snapshots.
+
 ## Data Transformation
 
 `03_transform_stock_history.py`
 
-Reads historical JSON snapshots and transforms them into a structured CSV dataset.
+Reads historical JSON snapshots, transforms the data, calculates price-related metrics, and writes the Processed dataset directly to Parquet.
 
 Output:
 
-`data/processed/daily_stock_analysis.csv`
+`data/parquet/processed/daily_stock_analysis.parquet`
 
 ### Calculated Metrics
 
@@ -228,11 +254,13 @@ Output:
 | Overnight gap | Percentage difference between the current opening price and previous closing price. |
 | Five-day average volume | Average volume of the previous five available trading sessions, excluding the current session. |
 
+The output uses Apache Parquet with Snappy compression.
+
 ## Data Validation
 
 `04_validate_stock_data.py`
 
-Validates the transformed dataset before it is incorporated into the persistent historical layer.
+Validates the transformed Processed dataset before it is incorporated into the persistent historical layer.
 
 Validation includes:
 
@@ -248,9 +276,9 @@ Validation includes:
 
 Maintains the persistent historical dataset:
 
-`data/silver/daily_stock_history.csv`
+`data/parquet/silver/daily_stock_history.parquet`
 
-The process uses an upsert strategy based on the composite key:
+The process reads the Processed Parquet dataset and applies an upsert strategy based on the composite key:
 
 `(ticker, date)`
 
@@ -262,7 +290,7 @@ The operation is designed to be idempotent, preventing duplicate historical reco
 
 `08_validate_persistent_history.py`
 
-Validates the persistent Silver dataset against the latest processed source data.
+Validates the persistent Silver dataset against the latest Processed source data.
 
 Checks include:
 
@@ -295,7 +323,7 @@ Reads the persistent Silver dataset and generates analytical indicators for each
 
 Output:
 
-`data/gold/daily_stock_indicators.csv`
+`data/parquet/gold/daily_stock_indicators.parquet`
 
 ### Calculated Indicators
 
@@ -393,17 +421,19 @@ Processed, Silver, and Gold datasets are partitioned by ingestion date.
 
 The historical Raw JSON files contain multiple trading dates, so their partitions represent ingestion dates rather than individual trading dates.
 
+Structured datasets are stored as Parquet files with Snappy compression.
+
 ### S3 Upload Scripts
 
 | Script | Responsibility |
 |---|---|
 | `14_upload_raw_to_s3.py` | Uploads original API JSON snapshots to S3. |
 | `15_cleanup_legacy_s3.py` | Removes objects and versions from the previous Raw layout. |
-| `16_upload_processed_to_s3.py` | Uploads the Processed CSV dataset. |
-| `17_upload_silver_to_s3.py` | Uploads the persistent Silver dataset. |
-| `18_upload_gold_to_s3.py` | Uploads the Gold analytical dataset. |
+| `16_upload_processed_to_s3.py` | Uploads the Processed Parquet dataset. |
+| `17_upload_silver_to_s3.py` | Uploads the persistent Silver Parquet dataset. |
+| `18_upload_gold_to_s3.py` | Uploads the Gold Parquet dataset. |
 
-Uploads use SHA-256 checksums to avoid unnecessary transfers when file content has not changed.
+Structured dataset uploads use SHA-256 checksums to avoid unnecessary transfers when file content has not changed.
 
 S3 versioning preserves previous object versions when an existing key is overwritten.
 
@@ -431,16 +461,17 @@ Database:
 
 Registered external tables:
 
-- `silver_daily_stock_history`
-- `gold_daily_stock_indicators`
+- `processed_daily_stock_analysis_parquet`
+- `silver_daily_stock_history_parquet`
+- `gold_daily_stock_indicators_parquet`
 
-Both tables use `ingestion_date` as a partition column.
+All three tables use `ingestion_date` as a partition column and reference Parquet datasets stored in S3.
 
 The Glue Data Catalog stores table definitions, schemas, and partition metadata. The actual datasets remain stored in S3.
 
 ### Amazon Athena
 
-Amazon Athena provides serverless SQL queries over the CSV files stored in S3.
+Amazon Athena provides serverless SQL queries over the Parquet files stored in S3.
 
 Athena uses the external table definitions registered in Glue Data Catalog.
 
@@ -468,22 +499,23 @@ Additional architecture details are available in:
 
 Coordinates the complete local data workflow through sequential execution of the project scripts.
 
-The current pipeline contains 14 steps:
+The current pipeline contains 15 steps:
 
 1. Fetch current stock quotes.
 2. Fetch historical stock data.
-3. Transform historical data.
-4. Validate processed data.
-5. Upload Processed data to S3.
-6. Update persistent Silver history.
-7. Validate persistent Silver history.
-8. Upload Silver data to S3.
-9. Generate Gold indicators.
-10. Validate Gold data.
-11. Run Gold automated tests.
-12. Upload Gold data to S3.
-13. Upload Raw data to S3.
-14. Clean up obsolete local Raw snapshots.
+3. Transform historical data to Parquet.
+4. Validate Processed data.
+5. Run Silver automated tests.
+6. Upload Processed data to S3.
+7. Update persistent Silver history.
+8. Validate persistent Silver history.
+9. Upload Silver data to S3.
+10. Generate Gold indicators.
+11. Validate Gold data.
+12. Run Gold automated tests.
+13. Upload Gold data to S3.
+14. Upload Raw data to S3.
+15. Clean up obsolete local Raw snapshots.
 
 Each step runs using the same Python interpreter as the orchestrator.
 
@@ -507,7 +539,7 @@ The cleanup process supports manual confirmation and automatic execution through
 
 Unclassified files are preserved.
 
-`15_cleanup_legacy_s3.py` was used to clean up the previous S3 object layout.
+`15_cleanup_legacy_s3.py` was used to clean up the previous S3 object layout. It is a legacy maintenance script and is not part of the regular pipeline.
 
 ## Logging and Error Handling
 
@@ -528,7 +560,6 @@ Timestamped log files are stored in the `logs/` directory.
 
 ### Lakehouse Improvements
 
-- Convert CSV datasets to Parquet.
 - Implement Apache Spark and PySpark for distributed processing.
 - Introduce Delta Lake for transactional data management.
 - Explore Databricks for Lakehouse development.
@@ -556,6 +587,7 @@ This project is designed to demonstrate practical data engineering skills throug
 - Data ingestion and API integration.
 - Layered data architecture.
 - Data transformation and analytical modeling.
+- Apache Parquet and columnar storage.
 - Data quality and automated testing.
 - Idempotent data processing.
 - Pipeline orchestration.

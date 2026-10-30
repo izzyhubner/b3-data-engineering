@@ -1,3 +1,4 @@
+
 import logging
 import re
 import subprocess
@@ -13,22 +14,38 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 RUN_TIMESTAMP = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 LOG_FILE = LOG_DIR / f"pipeline_{RUN_TIMESTAMP}.log"
 
+
 PIPELINE_STEPS = [
+    # Extract
     "01_fetch_stock_quote.py",
     "02_fetch_stock_history.py",
+
+    # Processed layer
     "03_transform_stock_history.py",
     "04_validate_stock_data.py",
+
+    # Silver upsert tests before modifying persistent history
+    "07_test_stock_history.py",
+
+    # Publish Processed
     "16_upload_processed_to_s3.py",
+
+    # Silver layer
     "06_update_stock_history.py",
     "08_validate_persistent_history.py",
     "17_upload_silver_to_s3.py",
+
+    # Gold layer
     "11_build_gold_indicators.py",
     "12_validate_gold_data.py",
     "13_test_gold_indicators.py",
     "18_upload_gold_to_s3.py",
+
+    # Raw publication and cleanup
     "14_upload_raw_to_s3.py",
     "10_cleanup_raw_data.py",
 ]
+
 
 LOG_LEVEL_PATTERN = re.compile(
     r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*\|"
@@ -66,7 +83,9 @@ def run_step(script_name):
 
     if not script_path.is_file():
         logging.error("Script not found: %s", script_path)
-        raise FileNotFoundError(f"Script not found: {script_path}")
+        raise FileNotFoundError(
+            f"Script not found: {script_path}"
+        )
 
     logging.info("Starting step: %s", script_name)
 
@@ -85,8 +104,12 @@ def run_step(script_name):
             errors="replace",
             check=False,
         )
+
     except OSError:
-        logging.exception("Could not start script: %s", script_name)
+        logging.exception(
+            "Could not start script: %s",
+            script_name,
+        )
         raise
 
     log_subprocess_output(
@@ -107,6 +130,7 @@ def run_step(script_name):
             script_name,
             result.returncode,
         )
+
         raise RuntimeError(
             f"Pipeline stopped at {script_name} "
             f"with exit code {result.returncode}"
@@ -125,6 +149,7 @@ def main():
     logging.info("Project directory: %s", PROJECT_DIR)
     logging.info("Python executable: %s", sys.executable)
     logging.info("Log file: %s", LOG_FILE)
+    logging.info("Total pipeline steps: %s", len(PIPELINE_STEPS))
 
     completed_steps = 0
 
@@ -138,6 +163,7 @@ def main():
             "Pipeline failed after %s completed step(s).",
             completed_steps,
         )
+
         logging.error("Pipeline status: FAILED")
         sys.exit(1)
 
@@ -145,6 +171,7 @@ def main():
         "Pipeline completed successfully. Steps completed: %s",
         completed_steps,
     )
+
     logging.info("Pipeline status: PASSED")
 
 

@@ -1,13 +1,30 @@
 
-import csv
 import logging
 import os
 import sys
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+
 PROJECT_DIR = Path(__file__).resolve().parent
-SOURCE_FILE = PROJECT_DIR / "data" / "processed" / "daily_stock_analysis.csv"
-TARGET_FILE = PROJECT_DIR / "data" / "silver" / "daily_stock_history.csv"
+
+SOURCE_FILE = (
+    PROJECT_DIR
+    / "data"
+    / "parquet"
+    / "processed"
+    / "daily_stock_analysis.parquet"
+)
+
+TARGET_FILE = (
+    PROJECT_DIR
+    / "data"
+    / "parquet"
+    / "silver"
+    / "daily_stock_history.parquet"
+)
 
 KEY_FIELDS = ["ticker", "date"]
 
@@ -18,42 +35,43 @@ logging.basicConfig(
 )
 
 
-def read_csv(file_path):
-    with file_path.open("r", newline="", encoding="utf-8-sig") as file:
-        reader = csv.DictReader(file)
+def read_parquet(file_path):
+    table = pq.read_table(file_path)
 
-        if not reader.fieldnames:
-            raise ValueError(f"CSV has no header: {file_path}")
+    if table.num_rows == 0:
+        raise ValueError(f"Parquet file contains no rows: {file_path}")
 
-        if not all(field in reader.fieldnames for field in KEY_FIELDS):
-            raise ValueError(
-                f"CSV must contain these key fields: {KEY_FIELDS}"
-            )
+    if not all(field in table.column_names for field in KEY_FIELDS):
+        raise ValueError(
+            f"Parquet must contain these key fields: {KEY_FIELDS}"
+        )
 
-        return reader.fieldnames, list(reader)
+    return table
 
 
 def update_history(source_file, target_file):
     if not source_file.exists():
         raise FileNotFoundError(f"Source file not found: {source_file}")
 
-    source_fields, source_rows = read_csv(source_file)
-
-    if not source_rows:
-        raise ValueError("Source CSV contains no rows.")
+    source_table = read_parquet(source_file)
+    source_rows = source_table.to_pylist()
 
     target_file.parent.mkdir(parents=True, exist_ok=True)
 
     if target_file.exists():
-        target_fields, target_rows = read_csv(target_file)
+        target_table = read_parquet(target_file)
 
-        if target_fields != source_fields:
+        if not target_table.schema.equals(
+            source_table.schema,
+            check_metadata=False,
+        ):
             raise ValueError(
-                "Source and target CSV columns do not match. "
+                "Source and target Parquet schemas do not match. "
                 "No data was changed."
             )
+
+        target_rows = target_table.to_pylist()
     else:
-        target_fields = source_fields
         target_rows = []
 
     history = {}
@@ -62,7 +80,9 @@ def update_history(source_file, target_file):
         key = (row["ticker"], row["date"])
 
         if key in history:
-            raise ValueError(f"Duplicate key already exists in target: {key}")
+            raise ValueError(
+                f"Duplicate key already exists in target: {key}"
+            )
 
         history[key] = row
 
@@ -78,6 +98,7 @@ def update_history(source_file, target_file):
         if key not in history:
             history[key] = row
             inserted += 1
+
         elif history[key] != row:
             history[key] = row
             updated += 1
@@ -87,17 +108,21 @@ def update_history(source_file, target_file):
         key=lambda row: (row["ticker"], row["date"]),
     )
 
-    temporary_file = target_file.with_suffix(".tmp")
+    result_table = pa.Table.from_pylist(
+        sorted_rows,
+        schema=source_table.schema,
+    )
+
+    temporary_file = target_file.with_suffix(".tmp.parquet")
 
     try:
-        with temporary_file.open(
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as file:
-            writer = csv.DictWriter(file, fieldnames=target_fields)
-            writer.writeheader()
-            writer.writerows(sorted_rows)
+        pq.write_table(
+            result_table,
+            temporary_file,
+            compression="snappy",
+            use_dictionary=["ticker"],
+            write_statistics=True,
+        )
 
         os.replace(temporary_file, target_file)
 
@@ -126,7 +151,7 @@ def main():
 
         return 0
 
-    except (OSError, csv.Error, ValueError) as error:
+    except (OSError, ValueError, pa.ArrowException) as error:
         logging.exception("History update failed: %s", error)
         return 1
 
