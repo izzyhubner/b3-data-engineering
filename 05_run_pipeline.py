@@ -23,6 +23,7 @@ PIPELINE_STEPS = [
     "11_build_gold_indicators.py",
     "12_validate_gold_data.py",
     "13_test_gold_indicators.py",
+    "14_upload_raw_to_s3.py",
     "10_cleanup_raw_data.py",
 ]
 
