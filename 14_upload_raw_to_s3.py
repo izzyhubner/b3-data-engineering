@@ -2,6 +2,7 @@
 import hashlib
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 
 import boto3
@@ -38,6 +39,37 @@ def calculate_sha256(file_path):
             sha256.update(chunk)
 
     return sha256.hexdigest()
+
+
+def extract_file_metadata(file_path):
+    filename_parts = file_path.stem.split("_")
+
+    ticker = filename_parts[0].upper()
+
+    if "_history_" in file_path.name:
+        dataset = "historical"
+        date_part = filename_parts[2]
+    else:
+        dataset = "quotes"
+        date_part = filename_parts[1]
+
+    ingestion_date = datetime.strptime(
+        date_part,
+        "%Y%m%d",
+    ).strftime("%Y-%m-%d")
+
+    return dataset, ticker, ingestion_date
+
+
+def build_s3_key(file_path):
+    dataset, ticker, ingestion_date = extract_file_metadata(file_path)
+
+    return (
+        f"raw/{dataset}/"
+        f"ticker={ticker}/"
+        f"ingestion_date={ingestion_date}/"
+        f"{file_path.name}"
+    )
 
 
 def get_s3_object_hash(s3_client, s3_key):
@@ -77,11 +109,10 @@ def upload_raw_files():
     skipped_files = 0
 
     for file_path in raw_files:
-        ticker = file_path.name.split("_")[0].lower()
-        s3_key = f"raw/{ticker}/{file_path.name}"
-
         try:
             local_hash = calculate_sha256(file_path)
+            s3_key = build_s3_key(file_path)
+
             s3_hash = get_s3_object_hash(s3_client, s3_key)
 
             if local_hash == s3_hash:
