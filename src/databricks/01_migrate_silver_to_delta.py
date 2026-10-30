@@ -1,13 +1,12 @@
 
 from pyspark.sql import SparkSession
+from delta.tables import DeltaTable
 
 # --------------------------------------------------
 # Configuration
 # --------------------------------------------------
 
-SOURCE_PATH = (
-    "s3://izzy-b3-lakehouse/silver/"
-)
+SOURCE_PATH = "s3://izzy-b3-lakehouse/silver/"
 
 DELTA_PATH = (
     "s3://izzy-b3-lakehouse/databricks/"
@@ -19,11 +18,6 @@ SCHEMA = "silver"
 TABLE = "daily_stock_history"
 
 FULL_TABLE_NAME = f"{CATALOG}.{SCHEMA}.{TABLE}"
-
-
-# --------------------------------------------------
-# Spark session
-# --------------------------------------------------
 
 spark = SparkSession.builder.getOrCreate()
 
@@ -46,6 +40,19 @@ if source_count == 0:
 
 
 # --------------------------------------------------
+# Check whether Delta table already exists
+# --------------------------------------------------
+
+print("Checking Delta destination...")
+
+if DeltaTable.isDeltaTable(spark, DELTA_PATH):
+    raise RuntimeError(
+        f"Delta table already exists at {DELTA_PATH}. "
+        "Migration stopped to prevent overwriting."
+    )
+
+
+# --------------------------------------------------
 # Write Delta table
 # --------------------------------------------------
 
@@ -54,7 +61,7 @@ print("Writing Delta table...")
 (
     df.write
     .format("delta")
-    .mode("errorifexists")
+    .mode("overwrite")
     .save(DELTA_PATH)
 )
 
