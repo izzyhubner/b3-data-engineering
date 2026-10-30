@@ -19,3 +19,10 @@ data/raw/*.json
 # Generated analytical datasets
 data/processed/*.csv
 data/silver/*.csv
+
+# Generated analytical datasets
+data/processed/*.csv
+data/silver/*.csv
+
+# Generated Gold analytical datasets
+data/gold/*.csv
