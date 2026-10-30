@@ -1,91 +1,139 @@
-# B3 Stock Market Data Pipeline
+# B3 Data Engineering
 
-A Python-based data engineering project that collects, transforms, validates, and maintains daily stock market data from the Brazilian stock exchange (B3).
+A data engineering portfolio project focused on collecting, transforming, validating, and maintaining Brazilian stock market data.
 
-The project currently focuses on building a reliable local data pipeline, with plans to evolve into a cloud-based Lakehouse and Data Warehouse architecture.
+The project uses B3 stock market data from the [Brapi API](https://brapi.dev/) to build a local data pipeline, with a future roadmap toward a cloud-based Lakehouse and Data Warehouse architecture.
 
-## Project Goals
+## Project Overview
 
-- Collect stock quotes and historical market data.
-- Store raw API responses for traceability.
-- Transform daily stock data into analytical features.
-- Validate data quality and consistency.
-- Maintain a persistent historical dataset through idempotent upserts.
-- Automate pipeline execution and raw data retention.
+The pipeline collects daily stock quotes and historical OHLCV data for a configurable list of Brazilian stocks.
 
-## Architecture
-
-The pipeline follows a layered data organization:
+Data flows through three layers:
 
 ```text
-API (brapi)
+Brapi API
     |
     v
-data/raw/
+   Raw
     |
     v
-data/processed/
+ Processed
     |
-    |  Upsert by ticker and date
     v
-data/silver/
+  Silver
 ```
 
-### Data Layers
+- **Raw:** Original API responses stored as JSON snapshots.
+- **Processed:** Transformed daily stock data enriched with technical and price-related metrics.
+- **Silver:** Persistent historical dataset maintained through an idempotent upsert process.
 
-| Layer | Purpose |
+## Current Status
+
+The local pipeline is operational and has successfully processed 10 stock tickers.
+
+| Component | Current Status |
 |---|---|
-| Raw | Timestamped JSON snapshots from the API |
-| Processed | Transformed daily stock analysis |
-| Silver | Persistent historical dataset, updated through upserts |
+| Stock quote ingestion | Operational |
+| Historical data ingestion | Operational |
+| Configurable ticker list | Implemented |
+| Data transformation | Implemented |
+| Data quality validation | Implemented |
+| Persistent Silver layer | Implemented |
+| Idempotent upsert | Implemented |
+| Automated raw data cleanup | Implemented |
+| Pipeline orchestration | Implemented |
+| Structured logging | Implemented |
+| Python version | 3.14 |
+
+Latest successful execution:
+
+- 10 tickers collected.
+- 220 historical records transformed.
+- 220 unique ticker-date combinations validated.
+- 0 data quality issues.
+- 0 missing historical keys.
+- 7 pipeline steps completed successfully.
 
 ## Technologies
 
-- Python
-- REST API
+- Python 3.14
+- Brapi API
 - JSON
 - CSV
-- Logging
-- Data validation
-- Automated pipeline execution
+- Git and GitHub
+- PowerShell
 
-## Supported Stocks
+The current implementation relies primarily on Python's standard library.
 
-The current pipeline collects data for:
+## Project Structure
+
+```text
+b3-data-engineering/
+│
+├── config/
+│   └── stocks.json
+│
+├── data/
+│   ├── raw/
+│   ├── processed/
+│   └── silver/
+│
+├── logs/
+│
+├── 01_fetch_stock_quote.py
+├── 02_fetch_stock_history.py
+├── 03_transform_stock_history.py
+├── 04_validate_stock_data.py
+├── 05_run_pipeline.py
+├── 06_update_stock_history.py
+├── 07_test_stock_history.py
+├── 08_validate_persistent_history.py
+├── 09_inventory_raw_data.py
+├── 10_cleanup_raw_data.py
+│
+├── stock_config.py
+├── .gitignore
+└── README.md
+```
+
+## Stock Configuration
+
+The ticker list is centralized in `config/stocks.json`.
+
+Current tracked assets:
 
 - PETR4
 - VALE3
 - ITUB4
 - MGLU3
+- BBDC4
+- BBAS3
+- WEGE3
+- ABEV3
+- RENT3
+- B3SA3
 
-## Pipeline Workflow
+New assets can be added by updating the configuration file without modifying the ingestion, transformation, or validation scripts.
 
-Run the complete pipeline using:
+## Data Ingestion
 
-```powershell
-python .\05_run_pipeline.py
-```
+### Current Quotes
 
-The pipeline executes the following stages:
+`01_fetch_stock_quote.py`
 
-| Script | Responsibility |
-|---|---|
-| `01_fetch_stock_quote.py` | Collects current stock quotes |
-| `02_fetch_stock_history.py` | Collects daily historical data |
-| `03_transform_stock_history.py` | Transforms raw data into analytical features |
-| `04_validate_stock_data.py` | Validates the processed dataset |
-| `06_update_stock_history.py` | Upserts data into persistent Silver storage |
-| `08_validate_persistent_history.py` | Validates the persistent historical dataset |
-| `10_cleanup_raw_data.py` | Removes older raw snapshots according to retention rules |
+Collects current stock quote information from the Brapi API and saves the original responses as JSON files in the Raw layer.
 
-Additional utility scripts:
+### Historical Prices
 
-- `07_test_stock_history.py`: tests the historical upsert logic.
-- `09_inventory_raw_data.py`: inventories raw files without modifying them.
+`02_fetch_stock_history.py`
 
-## Analytical Features
+Collects daily historical OHLCV data using:
 
-The transformed dataset includes standard OHLCV fields:
+- Range: 1 month
+- Interval: 1 day
+- Sorting: Ascending
+
+Historical records include:
 
 - Open
 - High
@@ -93,104 +141,20 @@ The transformed dataset includes standard OHLCV fields:
 - Close
 - Volume
 
-It also derives analytical features useful for market analysis:
+Both ingestion scripts authenticate through the `BRAPI_TOKEN` environment variable.
 
-| Feature | Description |
+## Data Transformation
+
+`03_transform_stock_history.py`
+
+Reads historical JSON snapshots and transforms them into a structured CSV dataset.
+
+Output:
+
+`data/processed/daily_stock_analysis.csv`
+
+### Calculated Metrics
+
+| Metric | Description |
 |---|---|
-| `body` | Difference between closing and opening prices |
-| `body_pct` | Candle body as a percentage of opening price |
-| `range` | Difference between high and low prices |
-| `range_pct` | Daily range as a percentage of opening price |
-| `upper_wick` | Upper candle shadow |
-| `lower_wick` | Lower candle shadow |
-| `close_position` | Closing price position within the daily range |
-| `is_bullish` | Indicates whether the close was above the open |
-| `daily_return_pct` | Percentage change from the previous close |
-| `overnight_gap_pct` | Percentage difference between the current open and previous close |
-| `volume_avg_5d` | Average volume of up to the five previous available trading sessions, excluding the current session |
-
-These features provide a foundation for studying price action, volatility, trading volume, and candlestick behavior.
-
-## Data Quality and Reliability
-
-The project includes validation at both the processed and persistent data stages.
-
-Current checks include:
-
-- Required fields and data types.
-- Unique stock and date combinations.
-- Positive price values.
-- OHLC consistency.
-- Formula consistency for derived features.
-- Presence of source records in persistent storage.
-
-The historical update process uses `(ticker, date)` as its business key.
-
-Repeated pipeline executions do not create duplicate records. Existing records are updated when their values change.
-
-### Latest Validation Results
-
-The latest successful pipeline execution reported:
-
-- 88 processed records.
-- 88 unique ticker-date keys.
-- 0 validation issues.
-- 0 missing source records in persistent storage.
-
-These figures describe the latest recorded run and may change as historical data grows.
-
-## Raw Data Retention
-
-Raw API snapshots are retained according to configurable rules:
-
-- Latest quote snapshot per ticker.
-- Latest three historical snapshots per ticker.
-
-Older files are removed by the cleanup stage. The cleanup script also supports manual execution with confirmation.
-
-## Project Structure
-
-```text
-b3-data-engineering/
-|
-|-- 01_fetch_stock_quote.py
-|-- 02_fetch_stock_history.py
-|-- 03_transform_stock_history.py
-|-- 04_validate_stock_data.py
-|-- 05_run_pipeline.py
-|-- 06_update_stock_history.py
-|-- 07_test_stock_history.py
-|-- 08_validate_persistent_history.py
-|-- 09_inventory_raw_data.py
-|-- 10_cleanup_raw_data.py
-|
-|-- data/
-|   |-- raw/
-|   |-- processed/
-|   |-- silver/
-|
-|-- logs/
-|
-|-- .gitignore
-|-- README.md
-```
-
-## Current Status
-
-The local pipeline is operational and has successfully completed all seven stages, including data collection, transformation, validation, persistent upsert, and raw data cleanup.
-
-The current implementation is a foundation for future development.
-
-## Future Improvements
-
-- Expand historical coverage.
-- Add more B3 tickers.
-- Implement automated scheduling.
-- Introduce automated tests for additional pipeline components.
-- Build a Delta Lake-based Lakehouse.
-- Develop a dimensional Data Warehouse.
-- Extend the architecture to AWS cloud services.
-
----
-
-**Disclaimer:** This project is intended for data engineering practice and market data analysis. It does not provide investment recommendations.
+| Body |
