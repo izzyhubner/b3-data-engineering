@@ -543,6 +543,12 @@ Timestamped log files are stored in the `logs/` directory.
 
 The long-term objective is to maintain a reusable stock market data source that can serve both Lakehouse and Data Warehouse architectures.
 
+### AWS Documentation
+
+- [Lakehouse Architecture](docs/aws/lakehouse-architecture.md)
+- [Athena SQL Queries](docs/aws/athena-queries.sql)
+- [Data Quality Validation](docs/aws/data-quality-validation.md)
+
 ## Project Goals
 
 This project is designed to demonstrate practical data engineering skills through a real-world financial data use case, emphasizing:
