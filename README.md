@@ -1,8 +1,15 @@
 # B3 Data Engineering
 
-A data engineering portfolio project focused on collecting, transforming, validating, and maintaining Brazilian stock market data through an AWS-based Lakehouse architecture.
+A data engineering portfolio project focused on collecting, transforming, validating, and maintaining Brazilian stock market data through cloud-based Lakehouse architectures.
 
 The project uses the [Brapi API](https://brapi.dev/) to collect B3 stock market data and processes it through a layered data pipeline using Python and AWS services.
+
+It implements two Lakehouse representations using the same underlying datasets:
+
+1. **AWS Lakehouse:** Amazon S3, Apache Parquet, AWS Glue Data Catalog, and Amazon Athena.
+2. **Delta Lakehouse:** Amazon S3, Databricks, Apache Spark, Delta Lake, and Unity Catalog.
+
+The original Parquet implementation remains operational. Delta tables are stored separately, allowing both representations to be maintained and evaluated without modifying the original datasets.
 
 ## Project Overview
 
@@ -14,51 +21,69 @@ Data flows through four layers:
                          Brapi API
                              |
                              v
-                           Raw
-                         (JSON)
+                      Python Pipeline
                              |
                              v
-                        Processed
-                        (Parquet)
+                            Raw
+                           (JSON)
                              |
                              v
-                          Silver
-                        (Parquet)
+                         Processed
+                         (Parquet)
                              |
                              v
-                           Gold
-                        (Parquet)
+                           Silver
+                         (Parquet)
                              |
                              v
-                      AWS S3 Lakehouse
+                            Gold
+                         (Parquet)
                              |
-                    +--------+--------+
-                    |                 |
-                    v                 v
-                 AWS Glue          Athena
-               Data Catalog     SQL Queries
+                             v
+                       AWS S3 Lakehouse
+                             |
+                   +---------+---------+
+                   |                   |
+                   v                   v
+                AWS Glue            Athena
+              Data Catalog       SQL Queries
+                                      
+
+                 AWS S3 - Original Parquet
+                             |
+                             v
+                         Databricks
+                       Apache Spark
+                             |
+                             v
+                         Delta Lake
+                             |
+                             v
+                       Unity Catalog
 ```
 
 ### Data Layers
 
-| Layer | Description | Storage Format |
-|---|---|---|
-| Raw | Original API responses stored as immutable ingestion snapshots. | JSON |
-| Processed | Transformed daily stock data enriched with price-related metrics. | Parquet |
-| Silver | Persistent historical dataset maintained through an idempotent upsert process. | Parquet |
-| Gold | Analytical dataset containing calculated technical indicators. | Parquet |
+| Layer | Description | Original Format | Delta Representation |
+|---|---|---|---|
+| Raw | Original API responses stored as immutable ingestion snapshots. | JSON | — |
+| Processed | Transformed daily stock data enriched with price-related metrics. | Parquet | — |
+| Silver | Persistent historical dataset maintained through an idempotent upsert process. | Parquet | Delta |
+| Gold | Analytical dataset containing calculated technical indicators. | Parquet | Delta |
 
 The local Python pipeline handles ingestion, transformation, validation, historical maintenance, and uploads to AWS S3.
 
-AWS Glue Data Catalog manages table metadata and partitions, while Amazon Athena provides serverless SQL access to the Lakehouse datasets.
+AWS Glue Data Catalog manages metadata for the original Parquet datasets, while Amazon Athena provides serverless SQL access.
 
-Structured datasets are written directly to Parquet using Snappy compression. No intermediate CSV conversion is required.
+Databricks is used to create a separate Delta Lake representation of the Silver and Gold datasets. Unity Catalog manages the metadata of these Delta tables.
+
+Structured datasets in the original AWS implementation are written directly to Parquet using Snappy compression. No intermediate CSV conversion is required.
 
 ## Current Status
 
-The local pipeline is operational and has successfully processed 10 stock tickers.
+The local Python pipeline and the initial AWS Lakehouse implementation are operational.
 
-The initial AWS Lakehouse implementation is also operational.
+The Silver and Gold datasets have also been successfully migrated to Delta Lake using Databricks Serverless Spark.
 
 | Component | Current Status |
 |---|---|
@@ -85,9 +110,15 @@ The initial AWS Lakehouse implementation is also operational.
 | AWS Glue database and external tables | Implemented |
 | Glue partition registration | Implemented |
 | Amazon Athena SQL queries | Implemented |
+| Databricks S3 integration | Implemented |
+| Unity Catalog | Implemented |
+| Silver Parquet-to-Delta migration | Implemented |
+| Gold Parquet-to-Delta migration | Implemented |
+| Delta transaction history inspection | Validated |
+| Production Delta incremental updates | Planned |
 | Cloud-native orchestration | Planned |
-| Distributed processing with Spark | Planned |
-| Delta Lake | Planned |
+| Data Warehouse architecture | Planned |
+| Lakehouse and Data Warehouse comparison | Planned |
 
 ### Latest Validated AWS Architecture
 
@@ -109,6 +140,25 @@ Latest Athena validation results:
 
 Silver and Gold contain the accumulated historical dataset, while Processed represents the latest transformed ingestion.
 
+### Latest Validated Delta Tables
+
+The original Silver and Gold Parquet datasets were migrated to Delta Lake and registered in Unity Catalog.
+
+| Layer | Unity Catalog Table | Records | Columns | Delta Version |
+|---|---|---:|---:|---:|
+| Silver | `b3_lakehouse.silver.daily_stock_history` | 230 | 25 | 0 |
+| Gold | `b3_lakehouse.gold.daily_stock_indicators` | 230 | 9 | 0 |
+
+Both migrations were validated against their original Parquet sources. Record counts and schemas matched.
+
+Gold data quality validation also confirmed:
+
+- 230 records.
+- 230 unique `(ticker, date)` combinations.
+- No null ticker values.
+- No null dates.
+- No null closing prices.
+
 ## Technologies
 
 - Python 3.14
@@ -118,6 +168,10 @@ Silver and Gold contain the accumulated historical dataset, while Processed repr
 - Amazon Athena
 - Terraform
 - Boto3
+- Databricks
+- Apache Spark
+- Delta Lake
+- Unity Catalog
 - JSON
 - Apache Parquet
 - PyArrow
@@ -136,6 +190,9 @@ b3-data-engineering/
 │
 ├── data/
 │   ├── raw/
+│   ├── processed/
+│   ├── silver/
+│   ├── gold/
 │   └── parquet/
 │       ├── processed/
 │       ├── silver/
@@ -149,8 +206,17 @@ b3-data-engineering/
 │
 ├── infrastructure/
 │   └── terraform/
+│       ├── main.tf
+│       ├── outputs.tf
+│       ├── providers.tf
+│       └── variables.tf
 │
 ├── logs/
+│
+├── src/
+│   └── databricks/
+│       ├── 01_migrate_silver_to_delta.py
+│       └── 02_migrate_gold_to_delta.py
 │
 ├── 01_fetch_stock_quote.py
 ├── 02_fetch_stock_history.py
@@ -177,7 +243,7 @@ b3-data-engineering/
 └── README.md
 ```
 
-Generated Parquet datasets are stored locally under `data/parquet/` and excluded from Git through `.gitignore`.
+Generated datasets, execution logs, Python cache files, and Terraform working files are not intended to be versioned in Git.
 
 ## Stock Configuration
 
@@ -412,6 +478,17 @@ s3://izzy-b3-lakehouse/
 ├── gold/
 │   └── ingestion_date=.../
 │
+├── databricks/
+│   ├── silver/
+│   │   └── daily_stock_history/
+│   │       ├── _delta_log/
+│   │       └── *.parquet
+│   │
+│   └── gold/
+│       └── daily_stock_indicators/
+│           ├── _delta_log/
+│           └── *.parquet
+│
 └── athena-results/
 ```
 
@@ -421,7 +498,9 @@ Processed, Silver, and Gold datasets are partitioned by ingestion date.
 
 The historical Raw JSON files contain multiple trading dates, so their partitions represent ingestion dates rather than individual trading dates.
 
-Structured datasets are stored as Parquet files with Snappy compression.
+Structured datasets in the original AWS implementation are stored as Parquet files with Snappy compression.
+
+Delta datasets are stored separately under the `databricks/` prefix.
 
 ### S3 Upload Scripts
 
@@ -453,7 +532,7 @@ Managed resources include:
 
 ### AWS Glue Data Catalog
 
-The project uses AWS Glue Data Catalog to manage metadata for the Lakehouse datasets.
+The project uses AWS Glue Data Catalog to manage metadata for the original Parquet Lakehouse datasets.
 
 Database:
 
@@ -492,6 +571,77 @@ SQL table definitions and validation queries are documented in:
 Additional architecture details are available in:
 
 `docs/aws/lakehouse-architecture.md`
+
+## Databricks and Delta Lake
+
+Databricks is used to implement a separate Delta Lake representation of the existing AWS Lakehouse datasets.
+
+The integration uses an AWS IAM role and a Databricks Unity Catalog Storage Credential to access the S3 bucket.
+
+The original Parquet datasets remain unchanged.
+
+### Storage Credential and External Locations
+
+The Databricks integration uses a Unity Catalog Storage Credential backed by an AWS IAM role.
+
+External Locations provide controlled access to the relevant S3 prefixes:
+
+| External Location | S3 Prefix | Purpose |
+|---|---|---|
+| `b3_silver_source` | `s3://izzy-b3-lakehouse/silver/` | Read original Silver Parquet data. |
+| `b3_gold_source` | `s3://izzy-b3-lakehouse/gold/` | Read original Gold Parquet data. |
+| `b3_delta_storage` | `s3://izzy-b3-lakehouse/databricks/` | Store Delta datasets. |
+
+The Delta datasets are stored under a dedicated prefix, preserving the original Parquet sources.
+
+### Unity Catalog
+
+The Databricks catalog is named:
+
+`b3_lakehouse`
+
+The following schemas and tables are registered:
+
+| Schema | Table | Format |
+|---|---|---|
+| silver | `daily_stock_history` | Delta |
+| gold | `daily_stock_indicators` | Delta |
+
+Unity Catalog manages table metadata and access to the Delta datasets stored in S3.
+
+### Delta Migration
+
+The migration scripts are located under:
+
+`src/databricks/`
+
+| Script | Responsibility |
+|---|---|
+| `01_migrate_silver_to_delta.py` | Migrates the Silver Parquet dataset into Delta Lake. |
+| `02_migrate_gold_to_delta.py` | Migrates the Gold Parquet dataset into Delta Lake. |
+
+Each migration:
+
+- Reads the existing Parquet source.
+- Checks whether the Delta destination already exists.
+- Writes the data to a separate S3 prefix.
+- Registers the resulting table in Unity Catalog.
+- Validates source and destination record counts.
+- Validates schema consistency.
+
+The migration process does not modify the original Parquet datasets.
+
+### Delta Transaction History
+
+Delta transaction history was inspected using:
+
+`DESCRIBE HISTORY`
+
+Both production tables currently have an initial version (version 0) representing their successful initial write.
+
+A separate test table was also used to validate Delta version history, time travel, and controlled updates through `MERGE`.
+
+The production Silver and Gold tables currently contain their initial migrated snapshots. Incremental Delta maintenance is part of the future roadmap.
 
 ## Pipeline Orchestration
 
@@ -560,19 +710,32 @@ Timestamped log files are stored in the `logs/` directory.
 
 ### Lakehouse Improvements
 
-- Implement Apache Spark and PySpark for distributed processing.
-- Introduce Delta Lake for transactional data management.
-- Explore Databricks for Lakehouse development.
-- Implement cloud-native pipeline orchestration and scheduling.
+- Implement incremental Delta updates and MERGE operations for production tables.
+- Evaluate Delta time travel and historical recovery for production datasets.
+- Improve automated validation between Parquet and Delta representations.
+- Evaluate cloud-native pipeline orchestration and scheduling.
+- Compare query performance and storage characteristics across the two Lakehouse implementations.
 
 ### Data Warehouse
 
-- Dimensional modeling.
-- Fact and dimension tables.
-- dbt for transformation and data modeling.
-- Amazon Redshift for analytical workloads.
+- Design dimensional models using facts and dimensions.
+- Implement a Data Warehouse using the same stock market dataset.
+- Introduce dbt for transformation and data modeling.
+- Evaluate PostgreSQL and Amazon Redshift as analytical storage options.
 
-The long-term objective is to maintain a reusable stock market data source that can serve both Lakehouse and Data Warehouse architectures.
+### Architecture Comparison
+
+The long-term objective is to compare Lakehouse and Data Warehouse architectures using the same source data.
+
+The comparison will consider:
+
+- Data modeling and transformation approaches.
+- Storage formats and organization.
+- Query performance.
+- Data maintenance and incremental processing.
+- Data quality and governance.
+- Operational complexity.
+- Infrastructure and operational costs.
 
 ### AWS Documentation
 
@@ -588,6 +751,7 @@ This project is designed to demonstrate practical data engineering skills throug
 - Layered data architecture.
 - Data transformation and analytical modeling.
 - Apache Parquet and columnar storage.
+- Delta Lake and transactional data management.
 - Data quality and automated testing.
 - Idempotent data processing.
 - Pipeline orchestration.
@@ -595,3 +759,5 @@ This project is designed to demonstrate practical data engineering skills throug
 - Infrastructure as Code.
 - Cloud storage and metadata management.
 - Serverless SQL analytics.
+- Lakehouse architecture implementation.
+- Comparative evaluation of analytical data architectures.
