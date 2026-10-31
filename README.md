@@ -737,9 +737,11 @@ The comparison will consider:
 - Operational complexity.
 - Infrastructure and operational costs.
 
-### AWS Documentation
+## Architecture Documentation
 
 - [Lakehouse Architecture](docs/aws/lakehouse-architecture.md)
+- [Data Warehouse Architecture](docs/warehouse/data-warehouse-architecture.md)
+- [Lakehouse vs. Data Warehouse Comparison](docs/architecture-comparison.md)
 - [Athena SQL Queries](docs/aws/athena-queries.sql)
 - [Data Quality Validation](docs/aws/data-quality-validation.md)
 
